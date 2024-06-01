@@ -1,5 +1,5 @@
 use super::template::EOI;
-use crate::{error::Error, token::Pair, typed::tracker::Tracker, Position, Span};
+use crate::{cursor::Cursor, error::Error, token::Pair, typed::tracker::Tracker, Position, Span};
 use core::{fmt::Debug, hash::Hash};
 use pest2::Stack;
 
@@ -12,17 +12,17 @@ pub trait RuleType: Copy + Debug + Eq + Hash + Ord {
 }
 
 /// Node of a typed syntax tree.
-pub trait TypedNode<'i, R: RuleType>: Sized {
+pub trait TypedNode<'i, R: RuleType, P: Cursor>: Sized {
     /// Try parse a part of or all of remained string into a node.
     fn try_parse_with_partial(
-        input: Position<'i>,
+        input: P,
         stack: &mut Stack<Span<'i>>,
         tracker: &mut Tracker<'i, R>,
-    ) -> Option<(Position<'i>, Self)>;
+    ) -> Option<(P, Self)>;
     /// Try parse remained string into a node.
     #[inline]
     fn try_parse_with(
-        input: Position<'i>,
+        input: P,
         stack: &mut Stack<Span<'i>>,
         tracker: &mut Tracker<'i, R>,
     ) -> Option<Self> {
@@ -36,34 +36,28 @@ pub trait TypedNode<'i, R: RuleType>: Sized {
     }
     /// Try parsing leading part of string into a node.
     #[inline]
-    fn try_parse_partial(input: &'i str) -> Result<(Position<'i>, Self), Box<Error<R>>> {
+    fn try_parse_partial(input: P) -> Result<(P, Self), Box<Error<R>>> {
         let mut stack = Stack::new();
-        let input = Position::from_start(input);
         let mut tracker = Tracker::new(input);
         Self::try_parse_with_partial(input, &mut stack, &mut tracker)
             .ok_or_else(|| tracker.collect())
     }
     /// Try parsing given string into a node.
     #[inline]
-    fn try_parse(input: &'i str) -> Result<Self, Box<Error<R>>> {
+    fn try_parse(input: P) -> Result<Self, Box<Error<R>>> {
         let mut stack = Stack::new();
-        let input = Position::from_start(input);
         let mut tracker = Tracker::new(input);
         Self::try_parse_with(input, &mut stack, &mut tracker).ok_or_else(|| tracker.collect())
     }
     /// Check whether the some leading part of the result can be accepted.
     fn check_with_partial(
-        input: Position<'i>,
+        input: P,
         stack: &mut Stack<Span<'i>>,
         tracker: &mut Tracker<'i, R>,
-    ) -> Option<Position<'i>>;
+    ) -> Option<P>;
     /// Check whether the some leading part of the result can be accepted.
     #[inline]
-    fn check_with(
-        input: Position<'i>,
-        stack: &mut Stack<Span<'i>>,
-        tracker: &mut Tracker<'i, R>,
-    ) -> bool {
+    fn check_with(input: P, stack: &mut Stack<Span<'i>>, tracker: &mut Tracker<'i, R>) -> bool {
         let input = match Self::check_with_partial(input, stack, tracker) {
             Some(input) => input,
             None => return false,
@@ -80,9 +74,9 @@ pub trait TypedNode<'i, R: RuleType>: Sized {
     }
     /// Try parsing leading part of string into a node.
     #[inline]
-    fn check_partial(input: &'i str) -> Result<Position<'i>, Box<Error<R>>> {
+    fn check_partial(input: &'i str) -> Result<P, Box<Error<R>>> {
         let mut stack = Stack::new();
-        let input = Position::from_start(input);
+        let input = P::from_start(input);
         let mut tracker = Tracker::new(input);
         Self::check_with_partial(input, &mut stack, &mut tracker).ok_or_else(|| tracker.collect())
     }
@@ -90,7 +84,7 @@ pub trait TypedNode<'i, R: RuleType>: Sized {
     #[inline]
     fn check(input: &'i str) -> Result<(), Box<Error<R>>> {
         let mut stack = Stack::new();
-        let input = Position::from_start(input);
+        let input = P::from_start(input);
         let mut tracker = Tracker::new(input);
         match Self::check_with(input, &mut stack, &mut tracker) {
             true => Ok(()),
@@ -218,13 +212,18 @@ pub trait PairTree<R: RuleType>: PairContainer<R> {
     }
 }
 
-impl<'i, R: RuleType, T: TypedNode<'i, R>> TypedNode<'i, R> for Option<T> {
+impl<'i, R, T, P> TypedNode<'i, R, P> for Option<T>
+where
+    R: RuleType,
+    T: TypedNode<'i, R, P>,
+    P: Cursor<'i>,
+{
     #[inline]
     fn try_parse_with_partial(
-        input: Position<'i>,
+        input: P,
         stack: &mut Stack<Span<'i>>,
         tracker: &mut Tracker<'i, R>,
-    ) -> Option<(Position<'i>, Self)> {
+    ) -> Option<(P, Self)> {
         stack.snapshot();
         match T::try_parse_with_partial(input, stack, tracker) {
             Some((pos, res)) => {
@@ -239,10 +238,10 @@ impl<'i, R: RuleType, T: TypedNode<'i, R>> TypedNode<'i, R> for Option<T> {
     }
     #[inline]
     fn check_with_partial(
-        input: Position<'i>,
+        input: P,
         stack: &mut Stack<Span<'i>>,
         tracker: &mut Tracker<'i, R>,
-    ) -> Option<Position<'i>> {
+    ) -> Option<P> {
         stack.snapshot();
         match T::check_with_partial(input, stack, tracker) {
             Some(pos) => {
@@ -259,32 +258,16 @@ impl<'i, R: RuleType, T: TypedNode<'i, R>> TypedNode<'i, R> for Option<T> {
 
 /// Parser that can produce typed syntax tree.
 pub trait TypedParser<R: RuleType> {
-    /// See [TypedNode::try_parse_with].
-    #[inline]
-    fn try_parse_with<'i, T: TypedNode<'i, R>>(
-        input: Position<'i>,
-        stack: &mut Stack<Span<'i>>,
-        tracker: &mut Tracker<'i, R>,
-    ) -> Option<T> {
-        T::try_parse_with(input, stack, tracker)
-    }
-    /// See [TypedNode::try_parse_with_partial].
-    #[inline]
-    fn try_parse_with_partial<'i, T: TypedNode<'i, R>>(
-        input: Position<'i>,
-        stack: &mut Stack<Span<'i>>,
-        tracker: &mut Tracker<'i, R>,
-    ) -> Option<(Position<'i>, T)> {
-        T::try_parse_with_partial(input, stack, tracker)
-    }
     /// See [TypedNode::try_parse].
     #[inline]
-    fn try_parse<'i, T: TypedNode<'i, R>>(input: &'i str) -> Result<T, Box<Error<R>>> {
+    fn try_parse<'i, T: TypedNode<'i, R, Position<'i>>>(
+        input: &'i str,
+    ) -> Result<T, Box<Error<R>>> {
         T::try_parse(input)
     }
     /// See [TypedNode::try_parse_partial].
     #[inline]
-    fn try_parse_partial<'i, T: TypedNode<'i, R>>(
+    fn try_parse_partial<'i, T: TypedNode<'i, R, Position<'i>>>(
         input: &'i str,
     ) -> Result<(Position<'i>, T), Box<Error<R>>> {
         T::try_parse_partial(input)
@@ -292,16 +275,15 @@ pub trait TypedParser<R: RuleType> {
 }
 
 /// Node of concrete syntax tree that never fails.
-pub trait NeverFailedTypedNode<'i, R: RuleType>
+pub trait NeverFailedTypedNode<'i, R: RuleType, P: Cursor<'i>>
 where
     Self: Sized + Debug + Clone + PartialEq + Default,
 {
     /// Parse leading part of given input into a typed node.
-    fn parse_with_partial(input: Position<'i>, stack: &mut Stack<Span<'i>>)
-        -> (Position<'i>, Self);
+    fn parse_with_partial(input: P, stack: &mut Stack<Span<'i>>) -> (P, Self);
     /// Parse leading part of given input into a typed node.
-    fn parse_partial(input: &'i str) -> (Position<'i>, Self) {
-        let input = Position::from_start(input);
+    fn parse_partial(input: &'i str) -> (P, Self) {
+        let input = P::from_start(input);
         let mut stack = Stack::new();
         Self::parse_with_partial(input, &mut stack)
     }

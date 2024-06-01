@@ -10,6 +10,7 @@ pub mod sequence;
 pub mod span;
 pub mod token;
 pub mod typed;
+pub mod cursor;
 
 extern crate alloc;
 

@@ -6,6 +6,7 @@
 
 use super::{wrapper::Rule as RuleWrapper, RuleType};
 use crate::{
+    cursor::Cursor,
     error::{Error, ErrorVariant},
     position::Position,
 };
@@ -45,16 +46,16 @@ impl ToString for SpecialError {
 type Tracked<R> = (Vec<R>, Vec<R>, Vec<SpecialError>);
 
 /// Error tracker.
-pub struct Tracker<'i, R: RuleType> {
-    position: Position<'i>,
+pub struct Tracker<'i, R: RuleType, P: Cursor<'i>> {
+    position: P,
     positive: bool,
     /// upper rule -> (positives, negatives)
     attempts: BTreeMap<Option<R>, Tracked<R>>,
-    stack: Vec<(R, Position<'i>, bool)>,
+    stack: Vec<(R, P, bool)>,
 }
-impl<'i, R: RuleType> Tracker<'i, R> {
+impl<'i, R: RuleType, P: Cursor<'i>> Tracker<'i, R, P> {
     /// Create an empty tracker for attempts.
-    pub fn new(pos: Position<'i>) -> Self {
+    pub fn new(pos: P) -> Self {
         Self {
             position: pos,
             positive: true,
