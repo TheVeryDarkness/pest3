@@ -34,6 +34,7 @@ impl<'g> ModuleError<'g> {
     }
 }
 
+/// A generic rule definition, either user-defined or built-in.
 #[derive(Clone, Debug)]
 pub enum RuleGenerics {
     /// Defined rule in current module.
@@ -41,7 +42,7 @@ pub enum RuleGenerics {
     BuiltIn {
         /// Built-in rule that accepts nothing as argument.
         ///
-        /// - Whether it requires lifetime specifier.
+        /// - Whether it requires a lifetime specifier.
         direct: Option<(bool,)>,
         /// Built-in rule that accepts a range as argument.
         ///
