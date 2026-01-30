@@ -8,10 +8,11 @@ use super::{
 use crate::{
     common::generate_include,
     config::collect_data,
-    typed::{analysis::collect_reachability, getter},
+    typed::getter,
     types::{option_type, pest},
 };
 use pest3_meta::{
+    analysis::{analyze, Analyzed},
     error::rename_meta_rule,
     parser::{
         self, fmt_sep, GrammarModule, Import, ParseExpr, ParseNode, ParseRule, PathArgs, Range,
@@ -49,13 +50,9 @@ pub struct RuleInfo<'g> {
     pub getter: bool,
 }
 impl<'g> RuleInfo<'g> {
-    fn new(
-        rule: &'g ParseRule,
-        config: Config,
-        reachability: &BTreeMap<&str, BTreeSet<&str>>,
-    ) -> Self {
+    fn new(rule: &'g ParseRule, config: Config, analyzed: &Analyzed<'_>) -> Self {
         let rule_name = rule.name.as_str();
-        let boxed = !config.box_rules_only_if_needed || !reachability.contains_key(rule_name);
+        let boxed = !config.box_rules_only_if_needed || analyzed.boxed(rule_name);
         let rule_id = format_ident!("r#{}", rule_name);
         let silent = rule.silent;
         let getter = !config.no_getter;
@@ -558,7 +555,7 @@ fn process_expr<'g>(
 fn process_rule<'g: 'f, 'f>(
     rule: &'g ParseRule,
     mod_sys: &ModuleSystem<'g>,
-    reachability: &BTreeMap<&str, BTreeSet<&str>>,
+    analyzed: &Analyzed<'_>,
     config: Config,
     root: &TokenStream,
     prefix: &[String],
@@ -579,7 +576,7 @@ fn process_rule<'g: 'f, 'f>(
         "~" => res.add_option_trivia(inter.typename),
         "^" => res.add_mandatory_trivia(inter.typename),
         _ => {
-            let rule_info = RuleInfo::new(rule, config, reachability);
+            let rule_info = RuleInfo::new(rule, config, analyzed);
             res.insert_rule_struct(create_rule(
                 config,
                 &rule_config,
@@ -640,7 +637,7 @@ fn process_rules<'g>(
         })
         .collect();
     let mut output = Output::new(module, modules);
-    let reachability = collect_reachability(rules);
+    let analyzed = analyze(module);
     for rule in rules.iter() {
         match rule.name.as_str() {
             "~" | "^" => {}
@@ -651,7 +648,7 @@ fn process_rules<'g>(
         process_rule(
             rule,
             mod_sys,
-            &reachability,
+            &analyzed,
             config,
             root,
             prefix,
@@ -756,64 +753,4 @@ pub fn derive_typed_parser(
         impl_parser,
         config,
     )
-}
-
-#[cfg(test)]
-#[allow(unused)]
-mod tests {
-    use crate::typed::analysis::collect_used_rules;
-
-    use super::*;
-    use pest3_meta::parser;
-    use std::{
-        string::String,
-        sync::{Arc, OnceLock},
-    };
-
-    static SYNTAX: OnceLock<String> = OnceLock::new();
-    static PARSE_RESULT: OnceLock<Arc<GrammarModule>> = OnceLock::new();
-
-    fn get() -> (&'static String, &'static Arc<GrammarModule>) {
-        let syntax = SYNTAX.get_or_init(|| {
-            String::from_utf8(std::fs::read("tests/syntax.pest").unwrap()).unwrap()
-        });
-        let parse_result =
-            PARSE_RESULT.get_or_init(|| parser::parse(&syntax, &"tests/syntax.pest").unwrap());
-        (syntax, parse_result)
-    }
-
-    #[test]
-    fn inlined_used_rules() {
-        let module = parser::parse(
-            r#"
-x = a - b
-a = "a"*
-b = "b"+
-"#,
-            &file!(),
-        )
-        .unwrap();
-        let GrammarModule { rules, .. } = module.as_ref();
-        let used = collect_used_rules(&rules);
-        assert_eq!(used, BTreeSet::from(["a", "b"]));
-    }
-
-    #[test]
-    /// Check we can actually break the cycles.
-    fn inter_reference() {
-        let module = parser::parse(
-            &r#"
-a = "a" - b*
-b = "b" - c?
-c = a+
-"#,
-            &file!(),
-        )
-        .unwrap();
-        let GrammarModule { rules, .. } = module.as_ref();
-        let used = collect_used_rules(&rules);
-        assert_eq!(used, BTreeSet::from(["a", "b", "c"]));
-        let graph = collect_reachability(&rules);
-        assert_eq!(graph, BTreeMap::from([("b", BTreeSet::from(["a", "c"]))]));
-    }
 }

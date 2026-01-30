@@ -11,6 +11,5 @@ mod generator;
 mod getter;
 mod module;
 mod output;
-mod analysis;
 
 pub use generator::derive_typed_parser;
