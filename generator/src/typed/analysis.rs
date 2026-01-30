@@ -28,8 +28,13 @@ use std::{
 };
 use syn::{DeriveInput, Generics};
 
+/// Collect used rules in `rule`, except trivia.
+///
 /// `'g` refers to grammar.
-fn collect_used_rule_without_trivia_into<'g>(
+///
+/// - Whether optional trivia is used
+/// - Whether mandatory trivia is used
+fn collect_used_rule_except_trivia_into<'g>(
     rule: &'g ParseRule,
     used: &mut BTreeSet<&'g str>,
 ) -> (bool, bool) {
@@ -86,13 +91,21 @@ fn collect_used_rule_without_trivia_into<'g>(
     res
 }
 
-/// (Whether optional trivia is used, Whether mandatory trivia is used, Used rules except trivias.)
-fn collect_used_rule_without_trivia(rule: &'_ ParseRule) -> (bool, bool, BTreeSet<&'_ str>) {
+/// Collect used rules in `rule`, except trivia.
+///
+/// # Returns
+///
+/// - Whether optional trivia is used
+/// - Whether mandatory trivia is used
+/// - Used rules except trivia.
+fn collect_used_rule_except_trivia(rule: &'_ ParseRule) -> (bool, bool, BTreeSet<&'_ str>) {
     let mut used = BTreeSet::new();
-    let (opt, man) = collect_used_rule_without_trivia_into(rule, &mut used);
+    let (opt, man) = collect_used_rule_except_trivia_into(rule, &mut used);
     (opt, man, used)
 }
 
+/// Collect all used rules in `rule`.
+///
 /// `'g` refers to grammar.
 fn collect_used_rule<'g>(
     rule: &'g ParseRule,
@@ -118,7 +131,7 @@ fn collect_used_rule<'g>(
             Trivia::None => (),
         }
     };
-    let (opt, man) = collect_used_rule_without_trivia_into(rule, res);
+    let (opt, man) = collect_used_rule_except_trivia_into(rule, res);
     if opt {
         require_trivia(Trivia::Optional);
     }
@@ -131,8 +144,8 @@ fn collect_trivia<'g>(
     opt: Option<&'g ParseRule>,
     man: Option<&'g ParseRule>,
 ) -> (Option<BTreeSet<&'g str>>, Option<BTreeSet<&'g str>>) {
-    let mut optional = opt.map(collect_used_rule_without_trivia);
-    let mut mandatory = man.map(collect_used_rule_without_trivia);
+    let mut optional = opt.map(collect_used_rule_except_trivia);
+    let mut mandatory = man.map(collect_used_rule_except_trivia);
     if let (Some(optional), Some(mandatory)) = (&mut optional, &mut mandatory) {
         if optional.1 {
             optional.2.extend(mandatory.2.iter());
@@ -184,6 +197,10 @@ pub(super) fn collect_reachability(rules: &[ParseRule]) -> BTreeMap<&str, BTreeS
         for rule in rules {
             let rule_ref = rule.name.as_str();
             if let Some(cur) = res.remove(&rule_ref) {
+                // `cur` contains all nodes that can be reached from `rule_ref`
+                // in no more than `i` steps.
+                // We remove it to avoid borrowing `res` mutably and immutably at the same time.
+                // And only if it will not reach itself in next step, we insert it back.
                 let mut new = cur.clone();
                 for referenced in cur {
                     if let Some(iter) = res.get(&referenced) {
